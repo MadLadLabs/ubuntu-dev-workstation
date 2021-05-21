@@ -1,0 +1,71 @@
+# Ubuntu 20
+# Run using:
+# ansible-galaxy collection install community.general
+# ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i localhost -u $USER step03-mediapipe.yml
+---
+- name: Install Mediapipe
+  hosts: localhost
+  become_method: sudo
+  tasks:
+    - name: Install required packages
+      become: yes
+      apt:
+        pkg:
+          - nodejs
+          - npm
+          # - libopencv-core-dev 
+          # - libopencv-highgui-dev
+          # - libopencv-calib3d-dev
+          # - libopencv-features2d-dev
+          # - libopencv-imgproc-dev
+          # - libopencv-video-dev
+          - mesa-common-dev
+          - libegl1-mesa-dev
+          - libgles2-mesa-dev
+          - python3
+          - python3-pip
+
+    - name: Set python symlink to python3
+      become: yes
+      ansible.builtin.file:
+        src: /usr/bin/python3
+        dest: /usr/bin/python
+        state: link
+
+    - name: Set pip symlink to pip3
+      become: yes
+      ansible.builtin.file:
+        src: /usr/bin/pip3
+        dest: /usr/bin/pip
+        state: link
+
+
+    - name: Install "Bazel" node.js package globally.
+      become: yes
+      community.general.npm:
+        name: '@bazel/bazelisk'
+        global: yes
+
+    - name: Read-write git checkout from github
+      ansible.builtin.git:
+        repo: https://github.com/google/mediapipe.git
+        dest: '/projects/mediapipe'
+        update: no
+
+    - name: Install numpy
+      become: yes
+      pip:
+        umask: "0022"
+        name:
+          - numpy
+
+    - name: Add -y option to instances of apt install
+      ansible.builtin.replace:
+        path: /projects/mediapipe/setup_opencv.sh
+        regexp: 'apt install (-y ){0,1}'
+        replace: 'apt install -y '
+
+    - name: Install OpenCV 3.4
+      shell: 
+        cmd: ./setup_opencv.sh
+        chdir: /projects/mediapipe

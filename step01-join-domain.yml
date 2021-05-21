@@ -1,0 +1,97 @@
+# Ubuntu 20
+# Based on https://computingforgeeks.com/join-ubuntu-debian-to-active-directory-ad-domain/
+# requires the following vars to be set:
+#       hostname
+#	domain_name
+#	domain_user
+#	domain_password
+# Run using:
+# ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i localhost -k -u $USER -K step01-join-domain.yml
+---
+- name: Join domain
+  hosts: localhost
+  vars_prompt:
+    - name: hostname
+      prompt: Desired hostname?
+      private: no
+
+    - name: domain_name
+      prompt: Domain name (in the domain.local format)?
+      private: no
+
+    - name: domain_user
+      prompt: Domain username?
+      private: no
+
+    - name: domain_password
+      prompt: Domain password?
+      private: yes
+
+  become: yes
+  become_method: sudo
+  tasks:
+    - name: Make hostname FQDN
+      hostname:
+        name: "{{ hostname }}.{{ domain_name }}"
+
+    - name: Install required packages
+      apt:
+        pkg:
+          - realmd
+          - libnss-sss
+          - libpam-sss
+          - sssd
+          - sssd-tools
+          - adcli
+          - samba-common-bin
+          - oddjob
+          - oddjob-mkhomedir
+          - packagekit
+          - python3-pip
+
+    - name: Install pexpect
+      pip:
+        umask: "0022"
+        name: pexpect
+
+    - name: Join domain
+      block:
+        - expect:
+            command: /bin/bash -c "/usr/sbin/realm join --user={{ domain_user }} {{ domain_name }}"
+            responses:
+              Password for *: "{{ domain_password }}"
+          register: domain_join_result
+      rescue:
+        - assert:
+            that: "'realm: Already joined to this domain' in domain_join_result.stdout"
+
+
+    - name: Add default_domain_suffix to sssd.conf
+      lineinfile:
+        dest: /etc/sssd/sssd.conf
+        line: 'default_domain_suffix = {{ domain_name }}'
+        insertafter: '^\[sssd\]'
+
+    - name: Disable ldap_use_tokengroups in sssd.conf
+      lineinfile:
+        dest: /etc/sssd/sssd.conf
+        line: 'ldap_use_tokengroups = false'
+        insertafter: '^\[domain/{{ domain_name }}\]'      
+
+    - name: "Enable mkhomedir"
+      command: pam-auth-update --enable mkhomedir
+
+    - name: Restart sssd if config was updated
+      service:
+        name: sssd
+        state: restarted
+
+    - name: "Permit {{ domain_user }} access to host"
+      command: "/bin/bash -c \"/usr/sbin/realm permit '{{ domain_user }}@{{ domain_name }}'\""
+
+    - name: "Add {{ domain_user }} to silent sudoers"
+      lineinfile:
+        dest: /etc/sudoers
+        line: "{{ domain_user }}@{{ domain_name }} ALL=(ALL) NOPASSWD:ALL"
+        validate: '/usr/sbin/visudo -cf %s'
+

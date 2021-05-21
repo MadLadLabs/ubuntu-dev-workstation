@@ -1,0 +1,141 @@
+# ubuntu 20
+# ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i localhost -u $USER docker-ubuntu.yml
+---
+- name: Deploy docker + nvidia docker support on ubuntu
+  hosts: localhost
+  become_method: sudo
+  vars:
+    docker_compose_version: 1.29.1
+    docker_compose_checksum: sha256:8097769d32e34314125847333593c8edb0dfc4a5b350e4839bef8c2fe8d09de7
+  tasks:
+    - name: Install packages
+      become: yes
+      ansible.builtin.package:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-apt
+        state: present
+
+    - name: Add Docker’s official GPG key
+      become: yes
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        keyring: /usr/share/keyrings/docker-archive-keyring.gpg
+    
+    - name: Get ubuntu release
+      command: lsb_release -cs
+      register: release_register
+      changed_when: false
+
+    - name: Set up the stable docker repository
+      become: yes
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg]
+          https://download.docker.com/linux/ubuntu {{ release_register.stdout | trim }} stable
+        state: present
+
+    - name: Install packages
+      become: yes
+      ansible.builtin.package:
+        name:
+          - docker-ce 
+          - docker-ce-cli
+          - containerd.io
+        state: present
+
+    - name: Register username on host
+      command: whoami
+      register: username_register
+      changed_when: false
+
+    - name: Add current user to docker group
+      become: yes
+      command: "adduser {{ username_register.stdout | trim }} docker"
+
+    - name: Add domain user to docker group
+      when: "'@' in username_register.stdout"
+      become: yes
+      lineinfile:
+        dest: /etc/security/group.conf
+        line: '*;*;{{ username_register.stdout | trim }};Al0000-2400;docker'
+
+    - name: Copy ad_group_mapping
+      become: yes
+      ansible.builtin.copy:
+        src: ad_group_mapping
+        dest: /usr/share/pam-configs/ad_group_mapping
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: "Enable ad_group_mapping"
+      when: "'@' in username_register.stdout"
+      become: yes
+      command: pam-auth-update --enable ad_group_mapping
+
+    - name: Restart sssd
+      when: "'@' in username_register.stdout"
+      become: yes
+      service:
+        name: sssd
+        state: restarted
+
+    - name: Register OS name
+      command: uname -s
+      register: os_name_register
+      changed_when: false
+
+    - name: Register OS architecture
+      command: uname -m
+      register: os_arch_register
+      changed_when: false
+
+    - name: Download docker-compose
+      become: yes
+      get_url:
+        url: "https://github.com/docker/compose/releases/download/{{ docker_compose_version }}/docker-compose-{{ os_name_register.stdout | trim }}-{{ os_arch_register.stdout | trim }}"
+        dest: /usr/local/bin/docker-compose
+        checksum: "{{ docker_compose_checksum }}"
+
+    - name: Apply executable permissions to the docker-compose binary
+      become: yes
+      ansible.builtin.file:
+        path: /usr/local/bin/docker-compose
+        mode: a+x
+
+# Based on https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html#docker
+
+    - name: Add NVidia’s GPG key
+      become: yes
+      ansible.builtin.apt_key:
+        url: https://nvidia.github.io/nvidia-docker/gpgkey 
+#        keyring: /usr/share/keyrings/nvidia-keyring.gpg
+
+    - name: Register OS distribution
+      shell: . /etc/os-release;echo $ID$VERSION_ID
+      register: os_distribution_register
+      changed_when: false
+
+    - name: Download NVidia repository list
+      become: yes
+      get_url:
+        url: "https://nvidia.github.io/nvidia-docker/{{ os_distribution_register.stdout | trim }}/nvidia-docker.list"
+        dest: /etc/apt/sources.list.d/nvidia-docker.list
+
+    - name: Install NVidia docker package
+      become: yes
+      apt:
+        update_cache: yes
+        pkg:
+          - nvidia-docker2
+
+    - name: Restart docker
+      become: yes
+      service:
+        name: docker
+        state: restarted

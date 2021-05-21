@@ -1,0 +1,61 @@
+# Ubuntu 20
+# Run using:
+# ansible-galaxy collection install community.general
+# ansible-galaxy install evandam.conda
+# ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i localhost -u $USER step04-conda.yml
+---
+- name: Install Conda
+  hosts: localhost
+  become_method: sudo
+  tasks:
+    - name: Try running conda command
+      command: conda
+      register: conda_check
+      failed_when: False
+
+    - name: Initialize conda_exists var
+      set_fact:
+        conda_exists: yes
+
+    - name: Check if conda exists
+      when: "'No such file or directory' not in conda_check"
+      set_fact:
+        conda_exists: no
+
+    - name: Download miniconda installer
+      when: not conda_exists
+      get_url:
+        url: https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+        dest: ~/Miniconda3-latest-Linux-x86_64.sh
+        checksum: sha256:1314b90489f154602fd794accfc90446111514a5a72fe1f71ab83e07de9504a7
+
+    - name: Run Miniconda installer
+      when: not conda_exists
+      shell: bash ~/Miniconda3-latest-Linux-x86_64.sh -b -u -p ~/miniconda3
+
+    - name: Run conda init
+      when: not conda_exists
+      shell: ~/miniconda3/bin/conda init
+
+    - name: Create a dev conda environment
+      conda:
+        name: dev
+        version: 3.8
+        environment: python3
+        state: present
+
+    - name: Install some packages in the environment
+      conda:
+        name: jupyterlab
+        channels: conda-forge
+
+    - name: Install some packages in the environment
+      conda:
+        name:
+          - pyqt=5
+          - pandas
+
+    - name: Install some packages in the environment
+      conda:
+        name: lxml
+        channels: anaconda
